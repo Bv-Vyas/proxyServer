@@ -1,18 +1,58 @@
 import express from "express";
-import fetch from "node-fetch"; // ES module import
+import fetch from "node-fetch";
 import cors from "cors";
+import jwt from "jsonwebtoken";
 import "dotenv/config";
 
 const app = express();
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 5000;
 
-app.use(cors()); // allow all origins
+app.use(cors());
 app.use(express.json());
 
 const SCRIPT_URL = process.env.API_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET;
 
-// POST endpoint to forward data to Google Apps Script
-app.post("/api", async (req, res) => {
+// ---------------- LOGIN ROUTE ----------------
+app.post("/api/login", async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    if (!email) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email required" });
+    }
+
+    // In a real app, you’d check DB — here we just trust Google login
+    const token = jwt.sign({ name, email }, JWT_SECRET, { expiresIn: "2h" });
+
+    return res.json({
+      success: true,
+      token,
+      user: { name, email },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---------------- VERIFY TOKEN ----------------
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader)
+    return res.status(401).json({ success: false, message: "Missing token" });
+
+  const token = authHeader.split(" ")[1];
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err)
+      return res.status(403).json({ success: false, message: "Invalid token" });
+    req.user = user;
+    next();
+  });
+}
+
+// ---------------- PROXY ROUTES ----------------
+app.post("/api", verifyToken, async (req, res) => {
   try {
     const response = await fetch(SCRIPT_URL, {
       method: "POST",
@@ -27,7 +67,6 @@ app.post("/api", async (req, res) => {
   }
 });
 
-// GET endpoint to fetch data from Google Apps Script
 app.get("/api", async (req, res) => {
   try {
     const query = new URLSearchParams(req.query).toString();
@@ -39,4 +78,4 @@ app.get("/api", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Proxy server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Proxy server running on port ${PORT}`));
